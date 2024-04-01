@@ -1,2 +1,3 @@
 pandas
 polars
+pyarrow # for pl.to_pandas()
