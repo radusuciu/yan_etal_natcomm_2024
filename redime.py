@@ -100,5 +100,5 @@ def output_reports():
         generate_tissue_report_df(sh_df, tissue)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     output_reports()

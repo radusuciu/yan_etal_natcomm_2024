@@ -1,3 +1,4 @@
 pandas
 polars
 pyarrow # for pl.to_pandas()
+typing_extensions
