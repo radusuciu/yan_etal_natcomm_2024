@@ -4,7 +4,7 @@ This repository contains code used for post-processing of proteomics data associ
 
 ## Usage
 
-All scripts in this repository were run in a Ubuntu Linux 22.04 environment with Python 3.10 installed. The following commands were issued to setup and activate the environment, as well as to install :
+All scripts in this repository were run in a Ubuntu Linux 22.04 environment with Python 3.10.12 installed. The following commands were issued to setup and activate the environment, as well as to install :
 
 ```bash
 python -m venv .venv
@@ -14,7 +14,7 @@ pip install -r requirements.txt
 
 ### Reductive dimethylation datasets
 
-Raw files were searched and quantified using ProteomeDiscoverer. Supplementary Figures 7e and 7f were generated in Graphpad Prism using the tables generated in the script `redime.py`. This script requires that all `*_Proteins.txt` files output by ProteomeDiscoverer are in the `data/input` directory, relative to `redime.py`. These data files must be obtained from PRIDE (see below section). The script aggregates data across replicates for each protein at each tested concentration and converts ratios to percent inhibition values, which are plotted in the mentioned figures.
+Raw files were searched and quantified using ProteomeDiscoverer. Supplementary Figures 7e and 7f were generated in Graphpad Prism using the tables generated in the script `redime.py`. This script requires that all `*_Proteins.txt` files output by ProteomeDiscoverer are in the `data/input` directory, relative to `redime.py`. These data files must be obtained from PRIDE (see below section). The script extracts ratios corresponding to serine hydrolases from each input file, converts them into percent competition values, and outputs a CSV report for each tissue into `data/output` directory.
 
 ### TMT datasets
 
