@@ -2,9 +2,8 @@ import pathlib
 
 import polars as pl
 
-
 DATA_INPUT_PATH = pathlib.Path('data/input')
-
+DATA_OUTPUT_PATH = pathlib.Path('data/output')
 
 sh_map_path = DATA_INPUT_PATH / 'serine_hydrolase_list.tsv'
 
@@ -69,11 +68,29 @@ def generate_tissue_report_df(sh_df: pl.DataFrame, tissue: str):
         sh_df
         .filter(
             (pl.col('tissue') == tissue) &
-            (pl.col('num_unique_peptides') >= 1) &
-            (pl.col('num_peptides') >= 3) |
-            (pl.col('symbol') == 'AIG1')
+            (
+                (pl.col('num_unique_peptides') >= 1) &
+                (pl.col('num_peptides') >= 3) |
+                (pl.col('symbol') == 'AIG1')
+            )
         )
+        .with_columns(
+            percent_competition=(100 * (1 - 1 / pl.col('ratio')))
+        )
+        .to_pandas()
+        .pivot_table(
+            index='symbol',
+            columns=['concentration', 'replicate'],
+            values='percent_competition',
+            sort=True,
+        )
+        .round(decimals=1)
+        .fillna('-')
     )
+
+    report_output_path = DATA_OUTPUT_PATH / f'{tissue}_redime.csv'
+
+    df.to_csv(report_output_path)
 
 
 def output_reports():
