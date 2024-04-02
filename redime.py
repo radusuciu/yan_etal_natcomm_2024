@@ -21,7 +21,7 @@ def get_single_replicate_sh_df(data_path: pathlib.Path) -> pl.DataFrame:
         'Abundance Ratio: (Light) / (Heavy)': 'ratio',
     }
 
-    return (
+    df = (
         pl
         .read_csv(
             source=data_path,
@@ -34,9 +34,14 @@ def get_single_replicate_sh_df(data_path: pathlib.Path) -> pl.DataFrame:
             }
         )
         .rename(desired_column_map)
+    )
+
+    return (
+        df
         .filter(pl.col('uniprot_accession').is_in(sh_map.keys()))
         .with_columns(
-            symbol=pl.col('uniprot_accession').replace(sh_map)
+            symbol=pl.col('uniprot_accession').replace(sh_map),
+            ratio=pl.col('ratio') / pl.col('ratio').median()
         )
     )
 
