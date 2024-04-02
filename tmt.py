@@ -1,3 +1,13 @@
+"""
+The code in this script was originally part of a larger codebase that processed
+data from TMT experiments. For this reason more calculations and metadata are
+kept than are strictly needed for the analysis carried out in this paper. The
+code is nevertheless and tested to run as is to generate the data tables used
+in the the supplementary figures of the paper this project references.
+
+Please feel free to ask any questions in the GitHub repository for this project.
+"""
+
 import itertools
 import pathlib
 import textwrap
