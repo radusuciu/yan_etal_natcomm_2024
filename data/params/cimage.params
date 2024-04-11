@@ -1,0 +1,14 @@
+light.chem.table = cimage_light.table
+heavy.chem.table = cimage_heavy.table
+N15.enrichment = 1.0
+ppm.tolerance = 10.0
+rt.window = 10
+local.rt.window = 2.0
+sn = 2.5
+ratio.range = 0.03125 32.0
+env.score.cutoff = 0.8
+r2.cutoff = 0.5
+minimum.peak.points = 3
+output.path = output
+peaks.with.ms2.only = TRUE
+singleton.ratio = 32.0

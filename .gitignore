@@ -1,1 +1,4 @@
 .venv
+.snakemake
+__pycache__
+.python-version

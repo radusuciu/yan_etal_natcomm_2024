@@ -8,27 +8,23 @@ in the the supplementary figures of the paper this project references.
 Please feel free to ask any questions in the GitHub repository for this project.
 """
 
+import base64
 import itertools
 import pathlib
+import re
 import textwrap
+import zlib
 from copy import deepcopy
 from functools import cached_property
-from typing import Iterable, Literal, Optional, Union
+from lxml import etree
+from typing import Callable, Generator, Iterable, Literal, Optional, Union
 
 import numpy as np
 import pandas as pd
 import polars as pl
 import polars.selectors as cs
+from pyteomics.openms.idxml import IDXML
 from typing_extensions import NotRequired, TypedDict
-
-
-class ChannelMapDict(TypedDict):
-    """Dict mapping condition name to list of channel indices."""
-
-    channel_map: dict[str, list[int]]
-    control_condition: NotRequired[str]
-    condition_to_control_map: NotRequired[dict[str, str]]
-    channel_to_sample_map: NotRequired[dict[Union[str, int], int]]
 
 
 PlexOptions = Literal[6, 10, 11, 16, 18]
@@ -39,6 +35,41 @@ MAX_CONTROL_CV = 0.5
 MAX_LOG2_COMPETITION_RATIO = 5
 MIN_LOG2_COMPETITION_RATIO = -5
 LOG2_MEDIAN_NORMALIZATION_THRESHOLD = 1
+
+TMT_REPORTER_TOLERANCE = 0.002
+
+# fmt: off
+TMT6PLEX = np.array([
+    126.127726, 127.124761, 128.134436, 129.131471, 130.141145, 131.138180,
+])
+
+TMT11PLEX = np.array([
+    126.127726, 127.124761, 127.131081, 128.128116, 128.134436, 129.131471, 129.137790, 130.134825,
+    130.141145, 131.138180, 131.144499,
+])
+
+TMT18PLEX = np.array([
+    126.127726, 127.124761, 127.131081, 128.128116, 128.134436, 129.131471, 129.137790, 130.134825,
+    130.141145, 131.138180, 131.144500, 132.141535, 132.147855, 133.144890, 133.151210, 134.148245,
+    134.154565, 135.15160,
+])
+
+TMT_LABELS = {
+    6: TMT6PLEX,
+    10: TMT11PLEX[:10],
+    11: TMT11PLEX,
+    16: TMT18PLEX[:16],
+    18: TMT18PLEX,
+}
+# fmt: on
+
+class ChannelMapDict(TypedDict):
+    """Dict mapping condition name to list of channel indices."""
+
+    channel_map: dict[str, list[int]]
+    control_condition: NotRequired[str]
+    condition_to_control_map: NotRequired[dict[str, str]]
+    channel_to_sample_map: NotRequired[dict[Union[str, int], int]]
 
 
 class ChannelMap:
@@ -506,52 +537,249 @@ def get_peptide_stats(psm_df: pl.DataFrame, solo_quant_df: pl.DataFrame) -> pl.D
     )
 
 
-def read_pd_output(pd_export_path: pathlib.Path) -> pl.DataFrame:
-    # TODO: replace with pure polars approach
-    df = pd.read_table(pd_export_path)
+def extract_tmt_signals(
+    tmt_labels: np.ndarray,
+    mz_array: np.ndarray,
+    intensity_array: np.ndarray,
+    noise_mz_array: np.ndarray,
+    noise_array: np.ndarray,
+    tolerance=0.002,
+) -> tuple[list, list]:
+    ms3_intensities = []
+    ms3_signal_to_noise_ratios = []
 
-    desired_columns = [
-        'clean_sequence',
-        'species',
-        'uniprot_accession',
-        'charge',
-        'sequence',
-        'spectrum_reference',
-        'ms2_mz',
-        'ms2_rt',
-        'ms3_intensities',
-        'ms3_signal_to_noise_ratios',
-        'score',
-        'score_type',
-        'is_unique',
-    ]
+    for label in tmt_labels:
+        max_intensity = 0
+        signal_to_noise_ratio = 0
 
-    return pl.from_pandas(
-        df.assign(
-            clean_sequence=df['Annotated Sequence'].str.split('.').str[1].str.upper(),
-            species='',
-            uniprot_accession=df['Protein Accessions'].str.split('; '),
-            charge=df['Charge'],
-            sequence=lambda df: df['Annotated Sequence'].str.cat(
-                df['Modifications'].fillna(''), sep='; Modifications: '
+        # check for peaks within the tolerance window
+        mz_diff = np.abs(mz_array - label)
+        valid_indices = np.where(mz_diff < tolerance)[0]
+
+        if valid_indices.size > 0:
+            # get the most intense peak within the tolerance window
+            max_intensity_index = valid_indices[np.argmax(intensity_array[valid_indices])]
+            max_intensity = intensity_array[max_intensity_index]
+            max_intensity_mz = mz_array[max_intensity_index]
+
+            # get the noise value at the same m/z, if the m/z exists in the m/z noise array
+            if max_intensity and max_intensity_mz in noise_mz_array:
+                noise_index = np.where(noise_mz_array == max_intensity_mz)[0][0]
+                noise_intensity = noise_array[noise_index]
+                signal_to_noise_ratio = max_intensity / noise_intensity
+            # otherwise, let's try and get the noise from the average of the noise values
+            # within the tolerance window, so long as we have an intensity value
+            elif max_intensity:
+                noise_mz_diff = np.abs(noise_mz_array - label)
+                noise_indices = np.where(noise_mz_diff < tolerance)[0]
+                noise_intensity = noise_array[noise_indices].mean()
+                signal_to_noise_ratio = max_intensity / noise_intensity
+
+        ms3_intensities.append(max_intensity)
+        ms3_signal_to_noise_ratios.append(signal_to_noise_ratio)
+
+    return (ms3_intensities, ms3_signal_to_noise_ratios)
+
+def process_ms3_spectrum(
+    elem: type(etree._Element),
+    plex: PlexOptions,
+    tolerance=TMT_REPORTER_TOLERANCE,
+) -> Generator[tuple[list, list, str], None, None]:
+    """Extracts TMT signals from an MS3 spectrum in an mzML file."""
+    parsed_data = {}
+
+    for param in elem.iterchildren(tag='{http://psi.hupo.org/ms/mzml}cvParam'):
+        if param.get('name') == 'ms level':
+            ms_level = param.get('value')
+            break
+
+    # skip non MS3
+    if ms_level == '3':
+        for precursorList in elem.iterchildren(tag='{http://psi.hupo.org/ms/mzml}precursorList'):
+            ms2_scan_id: str = precursorList[0].get('spectrumRef')
+            parsed_data['ms2_scan_id'] = ms2_scan_id
+            break
+
+        for data_array in elem.iterdescendants(tag='{http://psi.hupo.org/ms/mzml}binaryDataArray'):
+            data_name = None
+            data_type = None
+            data_content = None
+            compressed = False
+            binary_data_raw = None
+
+            for d in data_array.iterchildren():
+                elem_name = d.get('name', '')
+
+                if elem_name.endswith('array'):
+                    data_name = elem_name
+                elif elem_name == '64-bit float':
+                    data_type = np.float64
+                elif elem_name == '32-bit float':
+                    data_type = np.float32
+                elif elem_name == 'zlib compression':
+                    compressed = True
+                elif elem_name == 'no compression':
+                    compressed = False
+                elif d.tag == '{http://psi.hupo.org/ms/mzml}binary':
+                    binary_data_raw = d.text
+
+            decoded_data = base64.b64decode(binary_data_raw.encode('ascii'))
+
+            if compressed:
+                decoded_data = zlib.decompress(decoded_data)
+
+            data_content = np.frombuffer(bytearray(decoded_data), dtype=data_type)
+            parsed_data[data_name] = data_content
+
+        ms3_intensities, ms3_signal_to_noise_ratios = extract_tmt_signals(
+            TMT_LABELS[plex],
+            parsed_data['m/z array'],
+            parsed_data['intensity array'],
+            parsed_data['sampled noise m/z array'],
+            parsed_data['sampled noise intensity array'],
+            tolerance,
+        )
+
+        yield (ms3_intensities, ms3_signal_to_noise_ratios, ms2_scan_id)
+
+
+def fast_lxml_iter(context: type(etree.iterparse), func: Callable, *args, **kwargs) -> Generator:
+    """
+    http://lxml.de/parsing.html#modifying-the-tree
+    Based on Liza Daly's fast_iter
+    http://www.ibm.com/developerworks/xml/library/x-hiperfparse/
+    See also http://effbot.org/zone/element-iterparse.htm
+    """
+    for _, elem in context:
+        yield from func(elem, *args, **kwargs)
+        # It's safe to call clear() here because no descendants will be
+        # accessed
+        elem.clear()
+        # Also eliminate now-empty references from the root node to elem
+        for ancestor in elem.xpath('ancestor-or-self::*'):
+            while ancestor.getprevious() is not None:
+                del ancestor.getparent()[0]
+    del context
+
+
+def read_mzml_spectra(
+    mzml_path: pathlib.Path, process_element_fn: Callable, *args, **kwargs
+) -> Iterable[type(etree._Element)]:
+    context = etree.iterparse(str(mzml_path), tag='{http://psi.hupo.org/ms/mzml}spectrum', events=('end',))
+    yield from fast_lxml_iter(context, process_element_fn, *args, **kwargs)
+
+
+def get_mod_info_from_openms_sequence(sequence: str) -> tuple[list[str], list[int], list[str], str]:
+    """Extracts modification information from OpenMS style sequences.
+
+    Modifications information includes the amino acid, modification name, and position.
+    Also returns the clean sequence with all modification information and non-alpha characters removed.
+
+    Args:
+        sequence (str): OpenMS style sequence
+
+    Returns:
+        tuple[list[str], list[int], list[str], str]: Tuple containing lists of modification names, positions, amino acids, and the clean sequence
+    """
+    names = []
+    positions = []
+    amino_acids = []
+
+    # pattern to match OpenMS style modifications
+    # with support for one level of nested brackets to support cases where modifications
+    # are named according to their Unimod-styled composition
+    openms_mod_pattern = re.compile(
+        r'''
+        \(
+            ((?:        # Start of a non-capturing group.
+                [^()]*  # Match any number of characters that are not parentheses.
+                |       # OR
+                \(      # Match an opening parenthesis.
+                    [^()]*  # Match any number of characters that are not parentheses.
+                \)      # Match a closing parenthesis.
+            )+)         # End of the non-capturing group. The group must appear at least one time.
+        \)              # Match a closing parenthesis.
+        ''',
+        re.VERBOSE,
+    )
+
+    while match := openms_mod_pattern.search(sequence):
+        start = match.start()
+        amino_acid = sequence[start - 1]
+        names.append(match.group(1))
+        positions.append(start - 1 if (sequence[0] == '.' and amino_acid != '.') else start)
+        amino_acids.append(amino_acid)
+        sequence = sequence.replace(match.group(0), '', 1)
+
+    # translation table to remove all non-alpha characters
+    non_alpha_delete_translation = str.maketrans('', '', ''.join(c for c in map(chr, range(256)) if not c.isalpha()))
+
+    return names, positions, amino_acids, sequence.translate(non_alpha_delete_translation)
+
+
+def read_idxml(idxml_path: pathlib.Path) -> Generator[dict, None, None]:
+    id_data = IDXML(str(idxml_path))
+
+    for ms2_id in id_data:
+        peptide_hit = ms2_id['PeptideHit'][0]
+        proteins = peptide_hit['protein']
+        spectrum_reference = ms2_id['spectrum_reference']
+
+        original_sequence = peptide_hit['sequence']
+        mod_names, mod_positions, mod_amino_acids, clean_sequence = get_mod_info_from_openms_sequence(
+            original_sequence
+        )
+        sequence = original_sequence
+
+        # TODO: add pre and post cleavage residues to sequence
+        # look at aa_before, and aa_after for each peptide_hit
+        # aa_before = list(set(['aa_before'])).join('|')
+        # aa_after = list(set(peptide_hit['aa_after'])).join('|')
+
+        yield {
+            'clean_sequence': clean_sequence,
+            'original_sequence': original_sequence,
+            'sequence': sequence,
+            # 'aa_before': peptide_hit['aa_before'],
+            # 'aa_after': peptide_hit['aa_after'],
+            'mod_names': mod_names,
+            'mod_positions': mod_positions,
+            'mod_amino_acids': mod_amino_acids,
+            'species': ','.join(
+                sorted(set(p['accession'].split('|')[-1].split('_')[1].lower() for p in proteins))
             ),
-            original_sequence=df['Annotated Sequence'],
-            spectrum_reference=df['First Scan'],
-            ms2_mz=df['m/z [Da]'],
-            ms2_rt=df['RT [min]'],
-            ms3_intensities=df.filter(regex='^Abundance:').fillna(0).values.tolist(),
-            ms3_signal_to_noise_ratios=df.filter(regex='^Abundance:').fillna(0).values.tolist(),
-            score=df['Percolator q-Value'],
-            score_type='Percolator q-Value',
-            is_unique=df['# Protein Groups'] == 1,
-        )[desired_columns]
-        .explode('uniprot_accession')
-        .reset_index(drop=True)
+            'uniprot_accession': [p['accession'].split('|')[1] for p in proteins],
+            'charge': peptide_hit['charge'],
+            'spectrum_reference': spectrum_reference,
+            'ms2_mz': ms2_id['MZ'],
+            'ms2_rt': ms2_id['RT'],
+            'score': peptide_hit['score'],
+            'score_type': ms2_id['score_type'],
+            'is_unique': peptide_hit['protein_references'] == 'unique',
+        }
+
+
+def read_pipeline_output(
+    mzml_path: pathlib.Path,
+    filtered_idXML_path: pathlib.Path,
+    plex: PlexOptions,
+    tolerance=0.002,
+) -> pl.DataFrame:
+    ms2_df = pl.DataFrame(read_idxml(filtered_idXML_path))
+    ms3_df = pl.DataFrame(
+        read_mzml_spectra(mzml_path, process_ms3_spectrum, plex, tolerance),
+        schema=['ms3_intensities', 'ms3_signal_to_noise_ratios', 'ms2_scan_id'],
+    )
+
+    zeros = [0] * len(TMT_LABELS[plex])
+
+    return ms2_df.join(ms3_df, left_on='spectrum_reference', right_on='ms2_scan_id', how='left').with_columns(
+        ms3_intensities=pl.col('ms3_intensities').fill_null(zeros),
+        ms3_signal_to_noise_ratios=pl.col('ms3_signal_to_noise_ratios').fill_null(zeros),
     )
 
 
-
-def output_report():
+def output_report(mzml_path: pathlib.Path, filtered_idXML_path: pathlib.Path):
     DATA_INPUT_PATH = pathlib.Path('data/input')
     DATA_OUTPUT_PATH = pathlib.Path('data/output')
     sh_map_path = DATA_INPUT_PATH / 'serine_hydrolase_list.tsv'
@@ -559,8 +787,6 @@ def output_report():
 
     # map of mouse serine hydrolase uniprot accession to symbol to use in plot
     sh_map = dict(zip(*pl.read_csv(sh_map_path, separator='\t').to_dict(as_series=False).values()))
-
-    pd_export_path = DATA_INPUT_PATH / 'wat_dose_response_PSMs.txt'
 
     quantification_params = {
         'channel_map': {
@@ -574,11 +800,10 @@ def output_report():
         'control_condition': 'DMSO'
     }
 
+    output_df = read_pipeline_output(mzml_path, filtered_idXML_path, 18)
     channel_map = ChannelMap(quantification_params)
-
-    output_df = read_pd_output(pd_export_path)
     psm_df = get_psm_df(output_df, channel_map)
-    
+
     protein_quant_df = get_solo_quant_df(
         psm_df=psm_df,
         channel_map=channel_map,
@@ -619,9 +844,15 @@ def output_report():
         .fillna('-')
     )
 
-    report_output_path = DATA_OUTPUT_PATH / 'wat_dose_response_tmt.csv'
+    report_output_path = DATA_OUTPUT_PATH / f'{mzml_path.stem}_tmt.csv'
     report_df.to_csv(report_output_path)
 
+def output_reports():
+    for mzml_path in pathlib.Path('data/input').glob('*.mzML'):
+        filtered_idXML_path = pathlib.Path(f'data/input/{mzml_path.stem}_filtered_matches.idXML')
+        if not filtered_idXML_path.exists():
+            raise Exception(f'Filtered idXML file not found for {mzml_path.stem}')
+        output_report(mzml_path, filtered_idXML_path)
 
 if __name__ == '__main__':
-    output_report()
+    output_reports()

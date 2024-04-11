@@ -1,4 +1,8 @@
+lxml
 pandas
+ppx
 polars
 pyarrow # for pl.to_pandas()
+pyteomics
+snakemake
 typing_extensions

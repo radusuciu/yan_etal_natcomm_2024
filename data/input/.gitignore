@@ -1,2 +1,6 @@
-*_Proteins.txt
-*_PSMs.txt
+*.to_excel
+.pride-metadata
+.remote_files
+*.raw
+*.mzML
+*.idXML
