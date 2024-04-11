@@ -32,7 +32,7 @@ rule search:
         """
         docker run -it --rm --volume $PWD:/workspace ghcr.io/radusuciu/yan_etal_natcomm_2024 \
         comet \
-            -P/workspace/data/params/comet_redime.params \
+            -P/workspace/data/params/comet_tmt.params \
             -D/workspace/data/fasta/uniprot_mouse_2020_10_10_long-ddhd1_contam_revcat.fasta \
             "/workspace/{input}"
         """
