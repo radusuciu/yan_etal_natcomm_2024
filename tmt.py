@@ -549,8 +549,8 @@ def extract_tmt_signals(
     ms3_signal_to_noise_ratios = []
 
     for label in tmt_labels:
-        max_intensity = 0
-        signal_to_noise_ratio = 0
+        max_intensity = 0.0
+        signal_to_noise_ratio = 0.0
 
         # check for peaks within the tolerance window
         mz_diff = np.abs(mz_array - label)
