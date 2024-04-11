@@ -800,7 +800,7 @@ def output_report(mzml_path: pathlib.Path, filtered_idXML_path: pathlib.Path):
         'control_condition': 'DMSO'
     }
 
-    output_df = read_pipeline_output(mzml_path, filtered_idXML_path, 18)
+    output_df = read_pipeline_output(mzml_path, filtered_idXML_path, plex=18)
     channel_map = ChannelMap(quantification_params)
     psm_df = get_psm_df(output_df, channel_map)
 
