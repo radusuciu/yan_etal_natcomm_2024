@@ -43,7 +43,6 @@ ReDiMe raw files were converted using [`ThermoRawFileParser`](https://github.com
 Assuming all input files are in `data/input` (see [data files](#data-files) section if not), you can run the pipeline by issuing the following command:
 
 ```bash
-# edit the number of --cores if you want to go faster!
 snakemake --snakefile redime.smk --cores 1
 ```
 
@@ -68,7 +67,6 @@ TMT raw files were processed as described in the [ReDiMe section](#redime), with
 Assuming all input files are in `data/input` (see [data files](#data-files) section if not), you can run the pipeline by issuing the following command:
 
 ```bash
-# edit the number of --cores if you want to go faster!
 snakemake --snakefile tmt.smk --cores 1
 ```
 
@@ -89,16 +87,10 @@ The script sums PSM level signal-to-noise (SNR) values for each protein, convert
 
 ## General Notes
 
-- If you have any questions about the code here, or have issues replicating the analyses, please feel free to open and issue.
+- If you have any questions about the code here, or have issues replicating the analyses, please feel free to open an issue.
 - The code used for report generation has been extracted and modified from an internal Lundbeck application. For this reason it sometimes might do a bit more than would be strictly necessary for this publication.
 - In both the TMT and ReDiMe workflows, there is a rule named `add_mod_descriptions`. The reason this exists is because I'm using `comet` instead of `CometAdapter` and the `pep.xml` output by `comet` needs a few tweaks so that the differential and static modifications can be properly translated to the OpenMS `idXML` format by `IDConvert` -- see [`utils.py`](utils.py#add_mod_descriptions_to_comet_output) for implementation details. The reason that I chose to do this is because `CometAdapter` had performance issues when combined with older versions of `comet`. These are solved now, so if you re-process with a newer version of `comet` you can likely remove this step.
-- I've replaced the `unimod.xml` file that ships with OpenMS to add a differential modifications corresponding to the difference between the dimethyl modification (specified as a static mod), and the heavy modification used. The modification is named Dimethyl Heavy Delta and has a composition 13C(2) 2H(4) C(-2) H(-4) and monoisotopic mass of 6.031817.
-
-## TODO
-
-- add link to paper once published
-- customize resources used by each rule
-- review code and readme, adding comments/corrections as necessary
+- I've replaced the `unimod.xml` file that ships with OpenMS to add a differential modifications corresponding to the difference between the dimethyl modification (specified as a static mod), and the heavy modification used. The modification is named Dimethyl Heavy Delta and has a composition `13C(2) 2H(4) C(-2) H(-4)` and monoisotopic mass of 6.031817.
 
 ## Credits
 
