@@ -63,8 +63,14 @@ def read_cimage_output(data_path: pathlib.Path) -> pd.DataFrame:
 
     # calculated fields
     # translation table to remove all non-alpha characters
-    non_alpha_delete_translation = str.maketrans('', '', ''.join(c for c in map(chr, range(256)) if not c.isalpha()))
-    df_cimage['clean_sequence'] = df_cimage.sequence.str.split('.').str.get(1).str.translate(non_alpha_delete_translation)
+    non_alpha_delete_translation = str.maketrans(
+        '', '', ''.join(c for c in map(chr, range(256)) if not c.isalpha())
+    )
+    df_cimage['clean_sequence'] = (
+        df_cimage.sequence.str.split('.')
+        .str.get(1)
+        .str.translate(non_alpha_delete_translation)
+    )
 
     fasta_sequences = [
         sequence

@@ -63,6 +63,7 @@ TMT_LABELS = {
 }
 # fmt: on
 
+
 class ChannelMapDict(TypedDict):
     """Dict mapping condition name to list of channel indices."""
 
@@ -154,17 +155,24 @@ class ChannelMap:
 def get_normalized_channel_signals(df: pl.DataFrame, columns: Iterable[str], by: str) -> pl.DataFrame:
     # this is the total signal for each channel
     per_channel_total_signal = (
-        pl.col(col).sum().over('channel_index').alias(f'channel_total_{col}') for col in columns
+        pl.col(col).sum().over('channel_index').alias(f'channel_total_{col}')
+        for col in columns
     )
     # this is the mean of the total signal for groups of channels, defined by the `by` column
     per_group_mean_total_signal = (
-        pl.col(f'channel_total_{col}').mean().over(by).alias(f'group_mean_channel_total_{col}') for col in columns
+        pl.col(f'channel_total_{col}')
+        .mean()
+        .over(by)
+        .alias(f'group_mean_channel_total_{col}')
+        for col in columns
     )
     # each individual signal is adjusted so that the total channel signal is equal to the mean of the total channel signal for its group
     normalized_signals = (
-        (pl.col(col) * pl.col(f'group_mean_channel_total_{col}') / pl.col(f'channel_total_{col}')).alias(
-            f'normalized_{col}'
-        )
+        (
+            pl.col(col)
+            * pl.col(f'group_mean_channel_total_{col}')
+            / pl.col(f'channel_total_{col}')
+        ).alias(f'normalized_{col}')
         for col in columns
     )
 
@@ -222,13 +230,11 @@ def normalize_pipeline_output_df(
         # also, excepting List[str] columns, because polars doesn't support grouping by them right now
         .group_by(
             ~cs.by_dtype(pl.List(str))
-            & ~cs.by_name(
-                [
-                    *columns_to_explode,
-                    'normalized_ms3_intensities',
-                    'normalized_ms3_signal_to_noise_ratios',
-                ]
-            ),
+            & ~cs.by_name([
+                *columns_to_explode,
+                'normalized_ms3_intensities',
+                'normalized_ms3_signal_to_noise_ratios',
+            ]),
             maintain_order=True,
         )
         .agg(
@@ -259,12 +265,10 @@ def normalize_pipeline_output_df(
             'ms3_intensities',
             'ms3_signal_to_noise_ratios',
         )
-        .rename(
-            {
-                'normalized_ms3_intensities': 'ms3_intensities',
-                'normalized_ms3_signal_to_noise_ratios': 'ms3_signal_to_noise_ratios',
-            }
-        )
+        .rename({
+            'normalized_ms3_intensities': 'ms3_intensities',
+            'normalized_ms3_signal_to_noise_ratios': 'ms3_signal_to_noise_ratios',
+        })
         .collect()
     )
 
@@ -325,7 +329,10 @@ def get_channel_median_log2_ratios(df: pl.DataFrame) -> pl.DataFrame:
         .group_by('channel_index')
         .agg(
             pl.col('log2_competition_ratio')
-            .filter((pl.col('log2_competition_ratio').is_finite()) & (pl.col('log2_competition_ratio') > 0))
+            .filter(
+                (pl.col('log2_competition_ratio').is_finite())
+                & (pl.col('log2_competition_ratio') > 0)
+            )
             .median()
             .alias('median_log2_ratio')
         )
@@ -360,7 +367,8 @@ def median_normalize_log2_ratios(
         df.join(normalization_factors_df, on='channel_index', how='left')
         .with_columns(
             log2_competition_ratio=(
-                pl.col('log2_competition_ratio') - pl.col('normalization_factor').fill_nan(0).fill_null(0)
+                pl.col('log2_competition_ratio')
+                - pl.col('normalization_factor').fill_nan(0).fill_null(0)
             ).fill_null(np.nan)
         )
         .drop('normalization_factor')
@@ -384,36 +392,41 @@ def get_solo_quant_df(
     unique_control_conditions = set(control_conditions)
 
     sample_ids = [
-        sample_id for _, sample_id in sorted(channel_map.channel_to_sample_map.items(), key=lambda x: int(x[0]))
+        sample_id
+        for _, sample_id
+        in sorted(channel_map.channel_to_sample_map.items(), key=lambda x: int(x[0]))
     ]
     channel_indices = [*range(num_channels)]
 
     solo_quant_df = (
-        psm_df.rename(
-            {
-                'ms3_intensities': 'intensity',
-                'ms3_signal_to_noise_ratios': 'snr',
-            }
-        )
+        psm_df.rename({
+            'ms3_intensities': 'intensity',
+            'ms3_signal_to_noise_ratios': 'snr',
+        })
         .with_columns(
             pl.repeat(channel_indices, len(psm_df), dtype=pl.List(pl.Int8)).alias('channel_index'),
             pl.repeat(conditions, len(psm_df), dtype=pl.List(pl.String)).alias('condition'),
             pl.repeat(control_conditions, len(psm_df), dtype=pl.List(pl.String)).alias('control_condition'),
             pl.repeat(sample_ids, len(psm_df), dtype=pl.List(pl.Int32)).alias('sample_id'),
         )
-        .explode('intensity', 'snr', 'channel_index', 'condition', 'control_condition', 'sample_id')
-        .cast(
-            {
-                'condition': pl.Categorical,
-                'control_condition': pl.Categorical,
-                # we need this cast to keep things consistent when normalization is not applied
-                # in which case polars casts to Int64.. which is fine except we have some code
-                # that assumes it's a float that needs to be rounded and I'd rather not special
-                # case that when most often we do apply normalization
-                'intensity': pl.Float64,
-                'snr': pl.Float64,
-            }
+        .explode(
+            'intensity',
+            'snr',
+            'channel_index',
+            'condition',
+            'control_condition',
+            'sample_id',
         )
+        .cast({
+            'condition': pl.Categorical,
+            'control_condition': pl.Categorical,
+            # we need this cast to keep things consistent when normalization is not applied
+            # in which case polars casts to Int64.. which is fine except we have some code
+            # that assumes it's a float that needs to be rounded and I'd rather not special
+            # case that when most often we do apply normalization
+            'intensity': pl.Float64,
+            'snr': pl.Float64,
+        })
     )
 
     controls_grouped_stats = (
@@ -463,16 +476,28 @@ def get_solo_quant_df(
         )
         .group_by([index_column, 'condition'])
         .agg(pl.col('snr').mean().alias('mean_control_sum_snr'))
-        .select([index_column, pl.col('condition').alias('control_condition'), 'mean_control_sum_snr'])
+        .select([
+            index_column,
+            pl.col('condition').alias('control_condition'),
+            'mean_control_sum_snr',
+        ])
     )
 
     solo_quant_df = (
         solo_quant_df.join(mean_control_sum_snr, how='left', on=[index_column, 'control_condition'])
         .with_columns(
             snr=pl.when(pl.col('exclude')).then(pl.lit(None)).otherwise(pl.col('snr')),
-            intensity=pl.when(pl.col('exclude')).then(pl.lit(None)).otherwise(pl.col('intensity')),
+            intensity=pl.when(pl.col('exclude'))
+            .then(pl.lit(None))
+            .otherwise(pl.col('intensity')),
         )
-        .group_by([index_column, 'channel_index', 'sample_id', 'condition', 'control_condition'])
+        .group_by([
+            index_column,
+            'channel_index',
+            'sample_id',
+            'condition',
+            'control_condition',
+        ])
         .agg(
             mean_control_sum_snr=pl.col('mean_control_sum_snr').first(),
             total_intensity=pl.col('intensity').sum(),
@@ -482,7 +507,9 @@ def get_solo_quant_df(
             exclusion_reason=pl.col('exclusion_reason'),
         )
         .with_columns(
-            log2_competition_ratio=(pl.col('mean_control_sum_snr') / pl.col('total_snr')).log(base=2),
+            log2_competition_ratio=(
+                pl.col('mean_control_sum_snr') / pl.col('total_snr')
+            ).log(base=2),
         )
         .drop('mean_control_sum_snr', 'total_snr')
         .sort(index_column, 'channel_index')
@@ -501,8 +528,12 @@ def get_solo_quant_df(
             upper_bound=MAX_LOG2_COMPETITION_RATIO,
         )
     ).with_columns(
-        percent_competition=(100 * (1 - 1 / 2 ** pl.col('log2_competition_ratio'))).clip(lower_bound=0),
-        percent_of_control=(100 - 100 * (1 - 1 / 2 ** pl.col('log2_competition_ratio'))).clip(lower_bound=0),
+        percent_competition=(
+            100 * (1 - 1 / 2 ** pl.col('log2_competition_ratio'))
+        ).clip(lower_bound=0),
+        percent_of_control=(
+            100 - 100 * (1 - 1 / 2 ** pl.col('log2_competition_ratio'))
+        ).clip(lower_bound=0),
     )
 
     return clipped_solo_quant_df
@@ -579,6 +610,7 @@ def extract_tmt_signals(
         ms3_signal_to_noise_ratios.append(signal_to_noise_ratio)
 
     return (ms3_intensities, ms3_signal_to_noise_ratios)
+
 
 def process_ms3_spectrum(
     elem: type(etree._Element),
@@ -714,7 +746,12 @@ def get_mod_info_from_openms_sequence(sequence: str) -> tuple[list[str], list[in
     # translation table to remove all non-alpha characters
     non_alpha_delete_translation = str.maketrans('', '', ''.join(c for c in map(chr, range(256)) if not c.isalpha()))
 
-    return names, positions, amino_acids, sequence.translate(non_alpha_delete_translation)
+    return (
+        names,
+        positions,
+        amino_acids,
+        sequence.translate(non_alpha_delete_translation),
+    )
 
 
 def read_idxml(idxml_path: pathlib.Path) -> Generator[dict, None, None]:
@@ -726,8 +763,8 @@ def read_idxml(idxml_path: pathlib.Path) -> Generator[dict, None, None]:
         spectrum_reference = ms2_id['spectrum_reference']
 
         original_sequence = peptide_hit['sequence']
-        mod_names, mod_positions, mod_amino_acids, clean_sequence = get_mod_info_from_openms_sequence(
-            original_sequence
+        mod_names, mod_positions, mod_amino_acids, clean_sequence = (
+            get_mod_info_from_openms_sequence(original_sequence)
         )
         sequence = original_sequence
 
@@ -746,7 +783,12 @@ def read_idxml(idxml_path: pathlib.Path) -> Generator[dict, None, None]:
             'mod_positions': mod_positions,
             'mod_amino_acids': mod_amino_acids,
             'species': ','.join(
-                sorted(set(p['accession'].split('|')[-1].split('_')[1].lower() for p in proteins))
+                sorted(
+                    set(
+                        p['accession'].split('|')[-1].split('_')[1].lower()
+                        for p in proteins
+                    )
+                )
             ),
             'uniprot_accession': [p['accession'].split('|')[1] for p in proteins],
             'charge': peptide_hit['charge'],
@@ -795,9 +837,9 @@ def output_report(mzml_path: pathlib.Path, filtered_idXML_path: pathlib.Path):
             'ABD_10': [14, 16, 18],
             'ABD_0.1': [13, 15, 17],
             'ABD_0.01': [2, 4, 6],
-            'ABD_0.001': [7, 9, 11]
+            'ABD_0.001': [7, 9, 11],
         },
-        'control_condition': 'DMSO'
+        'control_condition': 'DMSO',
     }
 
     output_df = read_pipeline_output(mzml_path, filtered_idXML_path, plex=18)
@@ -827,11 +869,15 @@ def output_report(mzml_path: pathlib.Path, filtered_idXML_path: pathlib.Path):
         )
         .with_columns(
             symbol=pl.col('uniprot_accession').replace(sh_map),
-            concentration=pl.col('condition').cast(str).str.split('_').list.last().cast(float),
+            concentration=pl.col('condition')
+            .cast(str)
+            .str.split('_')
+            .list.last()
+            .cast(float),
         )
         .filter(
-            (pl.col('num_unique_quantified_peptides') >= 1) &
-            (pl.col('num_quantified_peptides') >= 3)
+            (pl.col('num_unique_quantified_peptides') >= 1)
+            & (pl.col('num_quantified_peptides') >= 3)
         )
         .to_pandas()
         .pivot_table(
@@ -847,12 +893,16 @@ def output_report(mzml_path: pathlib.Path, filtered_idXML_path: pathlib.Path):
     report_output_path = DATA_OUTPUT_PATH / f'{mzml_path.stem}_tmt.csv'
     report_df.to_csv(report_output_path)
 
+
 def output_reports():
     for mzml_path in pathlib.Path('data/input').glob('*.mzML'):
-        filtered_idXML_path = pathlib.Path(f'data/input/{mzml_path.stem}_filtered_matches.idXML')
+        filtered_idXML_path = pathlib.Path(
+            f'data/input/{mzml_path.stem}_filtered_matches.idXML'
+        )
         if not filtered_idXML_path.exists():
             raise Exception(f'Filtered idXML file not found for {mzml_path.stem}')
         output_report(mzml_path, filtered_idXML_path)
+
 
 if __name__ == '__main__':
     output_reports()

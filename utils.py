@@ -72,7 +72,9 @@ def add_mod_descriptions_to_comet_output(comet_output_path: pathlib.Path) -> Non
     tree = ET.parse(comet_output_path)
 
     mods_aa = tree.findall('.//pepxml:search_summary/pepxml:aminoacid_modification', ns)
-    mods_term = tree.findall('.//pepxml:search_summary/pepxml:terminal_modification', ns)
+    mods_term = tree.findall(
+        './/pepxml:search_summary/pepxml:terminal_modification', ns
+    )
 
     for mod_el in itertools.chain(mods_aa, mods_term):
         # if it has an amino acid key, return unmodified. if it's a terminal mod,
@@ -85,7 +87,11 @@ def add_mod_descriptions_to_comet_output(comet_output_path: pathlib.Path) -> Non
         mod_el.set('description', description)
         mod_el.attrib.pop('symbol', None)
 
-    tree.write(str(comet_output_path).replace('.pep.xml', '.fixed_mods.pep.xml'), encoding='UTF-8', xml_declaration=True)
+    tree.write(
+        str(comet_output_path).replace('.pep.xml', '.fixed_mods.pep.xml'),
+        encoding='UTF-8',
+        xml_declaration=True,
+    )
 
 
 def calculate_sequest_mono_mass(sequence):
@@ -112,7 +118,9 @@ def heavy_or_light(sequence: str) -> str:
 
 
 def format_description(description):
-    match = re.findall(r'(.+?)\|(.+?)\|(.+?)\s(.+?)(\s..=.+){1,10}', description)  # <5 params typically
+    match = re.findall(
+        r'(.+?)\|(.+?)\|(.+?)\s(.+?)(\s..=.+){1,10}', description
+    )  # <5 params typically
 
     if not match:
         raise RuntimeError(f'Error parsing: {description}')
@@ -159,7 +167,9 @@ def create_ipi_name_table(export_folder: pathlib.Path, dta_folder: pathlib.Path)
     proteins = proteins.iloc[:, 1:]
 
     # extract name
-    proteins[['db', 'uniprot_accession', 'protein_name']] = proteins.accession.str.split('|', expand=True)
+    proteins[['db', 'uniprot_accession', 'protein_name']] = (
+        proteins.accession.str.split('|', expand=True)
+    )
     proteins.accession = proteins.accession.str.strip()
     proteins.protein_description = proteins.protein_description.str.strip()
     proteins.sort_values('uniprot_accession', inplace=True)
@@ -214,7 +224,9 @@ def create_all_scan_table(
     # parse annotation data
     df['run_num'] = df.file_origin.str.extract(r'.*_(\d+).idXML').fillna('01')
     df['scan'] = df.spectrum_reference.str.extract('.+scan=(\d+)').astype(int)
-    df[['db', 'uniprot_accession', 'protein_name']] = df.accessions.str.split('|', expand=True)
+    df[['db', 'uniprot_accession', 'protein_name']] = df.accessions.str.split(
+        '|', expand=True
+    )
     df['sequence_shorthand'] = df.sequence.apply(sequence_shorthand)
     df['HL'] = df.sequence.apply(heavy_or_light)
     df['key'] = (
@@ -253,7 +265,9 @@ def create_cross_scan_table(df: pd.DataFrame, experiment_name: str, dta_folder: 
     df['mass'] = df.sequence_shorthand.apply(calculate_sequest_mono_mass)
 
     # sort dataframe by percolator score MS:1001492, bigger is better (HUPO-PSI)
-    df = df.sort_values(['uniprot_accession', 'key', 'MS:1001492'], ascending=[True, True, False])
+    df = df.sort_values(
+        ['uniprot_accession', 'key', 'MS:1001492'], ascending=[True, True, False]
+    )
 
     # propagate the best ms2
     cross_scan = df[['key', 'mass', 'scan']].drop_duplicates('key').copy()
