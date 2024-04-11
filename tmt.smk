@@ -28,6 +28,7 @@ rule search:
         "data/pipeline/{sample}/{sample}.mzML"
     output:
         "data/pipeline/{sample}/{sample}.pep.xml"
+    threads: snakemake.utils.available_cpu_count()
     shell:
         """
         docker run -it --rm --volume $PWD:/workspace ghcr.io/radusuciu/yan_etal_natcomm_2024 \
